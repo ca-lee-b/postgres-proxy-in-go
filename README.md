@@ -1,5 +1,7 @@
 # postgres proxy  
 
+> This is a repository for learning purposes. This is NOT ready for production.
+
 A Postgres connection proxy written in Go that implements:
 
 - **Connection pooling** (transaction-mode) — multiplex many client connections onto a smaller pool of persistent backend connections
