@@ -1,0 +1,22 @@
+{
+  "listen_addr": "0.0.0.0:8080",
+  "metrics_addr": ":9090",
+  "pool_size": 10,
+  "health_interval_seconds": 5,
+  "primary": {
+    "host": "localhost",
+    "port": 5433,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "postgres"
+  },
+  "replicas": [
+    {
+      "host": "localhost",
+      "port": 5434,
+      "user": "postgres",
+      "password": "postgres",
+      "database": "postgres"
+    }
+  ]
+}
