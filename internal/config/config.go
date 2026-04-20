@@ -16,12 +16,21 @@ type BackendConfig struct {
 }
 
 type Config struct {
-	ListenAddr     string          `json:"listen_addr"`
-	MetricsAddr    string          `json:"metrics_addr"`
-	PoolSize       int             `json:"pool_size"`
-	Primary        BackendConfig   `json:"primary"`
-	Replicas       []BackendConfig `json:"replicas"`
-	HealthInterval int             `json:"health_interval_seconds"`
+	ListenAddr  string `json:"listen_addr"`
+	MetricsAddr string `json:"metrics_addr"`
+	PoolSize    int    `json:"pool_size"`
+	PoolMinSize int    `json:"pool_min_size"`
+	// PoolMaxIdleSeconds — idle connections older than this may be closed by the reaper (if total > pool_min_size).
+	PoolMaxIdleSeconds int `json:"pool_max_idle_seconds"`
+	// PoolMaxLifeSeconds — connections older than this are recycled on checkout or by the reaper.
+	PoolMaxLifeSeconds int `json:"pool_max_life_seconds"`
+	// PoolAcquireTimeoutSeconds — max time to wait for a free connection (0 = wait until context only).
+	PoolAcquireTimeoutSeconds int `json:"pool_acquire_timeout_seconds"`
+	// PoolIdleCheckSeconds — how often the reaper runs (0 disables periodic reaping).
+	PoolIdleCheckSeconds int             `json:"pool_idle_check_seconds"`
+	Primary              BackendConfig   `json:"primary"`
+	Replicas             []BackendConfig `json:"replicas"`
+	HealthInterval       int             `json:"health_interval_seconds"`
 }
 
 // Config is a json file
@@ -46,6 +55,12 @@ func Default() *Config {
 		ListenAddr:  "0.0.0.0:5433",
 		MetricsAddr: ":9090",
 		PoolSize:    10,
+		PoolMinSize: 0,
+		// Defaults aligned with common pool settings; tune via JSON.
+		PoolMaxIdleSeconds:        300,
+		PoolMaxLifeSeconds:        3600,
+		PoolAcquireTimeoutSeconds: 3,
+		PoolIdleCheckSeconds:      30,
 		Primary: BackendConfig{
 			Host:     "localhost",
 			Port:     5432,

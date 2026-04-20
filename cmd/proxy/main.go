@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -36,17 +37,29 @@ func main() {
 	if metricsAddr == "" {
 		metricsAddr = ":9090"
 	}
-	metrics.StartServer(metricsAddr, func() []metrics.PoolStat {
+	metrics.StartServer(metricsAddr, func() metrics.PoolSnapshot {
 		var stats []metrics.PoolStat
+		var waitTotal, waitNanos, timeouts int64
 		for i, p := range rt.AllPools() {
 			label := "primary"
 			if i > 0 {
 				label = fmt.Sprintf("replica-%d", i-1)
 			}
-			total, inUse := p.Stats()
-			stats = append(stats, metrics.PoolStat{Label: label, Total: total, InUse: inUse})
+			total, inUse, idle, waiting := p.Stats()
+			stats = append(stats, metrics.PoolStat{
+				Label: label, Total: total, InUse: inUse, Idle: idle, Waiting: waiting,
+			})
+			wc, wn, to := p.WaitStats()
+			waitTotal += wc
+			waitNanos += wn
+			timeouts += to
 		}
-		return stats
+		return metrics.PoolSnapshot{
+			Pools:               stats,
+			PoolWaitTotal:       waitTotal,
+			PoolWaitSeconds:     float64(waitNanos) / 1e9,
+			PoolAcquireTimeouts: timeouts,
+		}
 	})
 
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
@@ -60,6 +73,9 @@ func main() {
 		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 		<-c
 		log.Println("shutting down...")
+		for _, p := range rt.AllPools() {
+			_ = p.Close()
+		}
 		ln.Close()
 		os.Exit(0)
 	}()
@@ -74,12 +90,12 @@ func main() {
 		metrics.Global.ClientsActive.Inc()
 		go func() {
 			defer metrics.Global.ClientsActive.Add(-1)
-			handleClient(conn, rt)
+			handleClient(conn, rt, cfg)
 		}()
 	}
 }
 
-func handleClient(clientConn net.Conn, rt *router.Router) {
+func handleClient(clientConn net.Conn, rt *router.Router, cfg *config.Config) {
 	defer clientConn.Close()
 	remote := clientConn.RemoteAddr().String()
 	log.Printf("[client %s] connected", remote)
@@ -134,7 +150,9 @@ func handleClient(clientConn net.Conn, rt *router.Router) {
 			log.Printf("[client %s] %s → %s  %.80s", remote, qtName(qt), poolLabel, sql)
 		}
 
-		bc, err := backendPool.Checkout()
+		checkoutCtx, cancelCheckout := checkoutContext(cfg)
+		bc, err := backendPool.Checkout(checkoutCtx)
+		cancelCheckout()
 		if err != nil {
 			log.Printf("[client %s] pool checkout error: %v", remote, err)
 			metrics.Global.PoolExhausted.Inc()
@@ -229,4 +247,14 @@ func qtName(qt protocol.QueryType) string {
 	default:
 		return "OTHER"
 	}
+}
+
+// checkoutContext returns a context for pool checkout. If pool_acquire_timeout_seconds is 0,
+// only explicit cancellation applies (we rely on the pool's internal acquire timeout).
+func checkoutContext(cfg *config.Config) (context.Context, context.CancelFunc) {
+	if cfg.PoolAcquireTimeoutSeconds <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(),
+		time.Duration(cfg.PoolAcquireTimeoutSeconds)*time.Second)
 }

@@ -4,6 +4,7 @@ package router
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/ca-lee-b/postgres-proxy-go/internal/config"
 	"github.com/ca-lee-b/postgres-proxy-go/internal/health"
@@ -20,11 +21,22 @@ type Router struct {
 }
 
 func New(config *config.Config) *Router {
-	primary := pool.New(config.Primary, config.PoolSize, "primary")
+	poolOpts := pool.Options{
+		MaxSize:           config.PoolSize,
+		MinSize:           config.PoolMinSize,
+		MaxIdle:           time.Duration(config.PoolMaxIdleSeconds) * time.Second,
+		MaxLife:           time.Duration(config.PoolMaxLifeSeconds) * time.Second,
+		AcquireTimeout:    time.Duration(config.PoolAcquireTimeoutSeconds) * time.Second,
+		IdleCheckInterval: time.Duration(config.PoolIdleCheckSeconds) * time.Second,
+	}
+
+	primary := pool.New(config.Primary, "primary", poolOpts)
+	primary.Start()
 
 	replicas := make([]*pool.Pool, len(config.Replicas))
 	for i, r := range config.Replicas {
-		replicas[i] = pool.New(r, config.PoolSize, fmt.Sprintf("replica-%d", i))
+		replicas[i] = pool.New(r, fmt.Sprintf("replica-%d", i), poolOpts)
+		replicas[i].Start()
 	}
 
 	checker := health.New(0) // caller can set interval and start

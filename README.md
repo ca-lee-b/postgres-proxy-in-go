@@ -29,7 +29,7 @@ psql / app
 ```bash
 go build -o proxy ./cmd/proxy
 ./proxy                          # defaults: primary on localhost:5432
-./proxy config.example.json     # with config file
+./proxy cmd/proxy/config.json    # with config file
 psql -h localhost -p 5433 -U postgres mydb
 ```
 
@@ -42,6 +42,11 @@ psql -h localhost -p 5433 -U postgres mydb
   "listen_addr": "0.0.0.0:5433",
   "metrics_addr": ":9090",
   "pool_size": 10,
+  "pool_min_size": 0,
+  "pool_max_idle_seconds": 300,
+  "pool_max_life_seconds": 3600,
+  "pool_acquire_timeout_seconds": 3,
+  "pool_idle_check_seconds": 30,
   "health_interval_seconds": 5,
   "primary": {
     "host": "localhost",
@@ -67,6 +72,11 @@ psql -h localhost -p 5433 -U postgres mydb
 | `listen_addr` | `0.0.0.0:5433` | Address clients connect to |
 | `metrics_addr` | `:9090` | HTTP metrics/health endpoint |
 | `pool_size` | `10` | Max backend connections per pool |
+| `pool_min_size` | `0` | Target minimum connections kept open (best-effort warmup + reaper floor) |
+| `pool_max_idle_seconds` | `300` | Idle longer than this may be closed if total exceeds `pool_min_size` |
+| `pool_max_life_seconds` | `3600` | Recycle connections older than this |
+| `pool_acquire_timeout_seconds` | `3` | Max wait for a free backend conn (`0` = no client-side deadline; pool still obeys internal settings) |
+| `pool_idle_check_seconds` | `30` | Reaper interval (`0` disables periodic idle reaping) |
 | `health_interval_seconds` | `5` | How often to probe backends |
 
 ---
@@ -86,9 +96,12 @@ curl localhost:9090/metrics
   "clients_active": 3,
   "pool_exhausted": 0,
   "backend_errors": 0,
+  "pool_wait_total": 12,
+  "pool_wait_seconds": 0.04,
+  "pool_acquire_timeouts": 0,
   "pools": [
-    { "label": "primary",   "total": 4, "in_use": 1 },
-    { "label": "replica-0", "total": 6, "in_use": 2 }
+    { "label": "primary",   "total": 4, "in_use": 1, "idle": 3, "waiting": 0 },
+    { "label": "replica-0", "total": 6, "in_use": 2, "idle": 4, "waiting": 1 }
   ]
 }
 ```
@@ -108,7 +121,8 @@ internal/
     protocol.go            Message framing, StartupMessage, query classification
   pool/
     pool.go                Transaction-mode connection pool
-    pool_md5.go            MD5 password auth
+    pool_md5.go            MD5 password auth (authType 5)
+    pool_scram.go          SCRAM-SHA-256 auth (authType 10, RFC 5802)
   router/
     router.go              Route queries to primary or replica
   health/
@@ -131,7 +145,7 @@ internal/
       INSERT/UPDATE/...   → primary pool
       SELECT FOR UPDATE   → primary pool
       Inside BEGIN        → primary pool (pinned for transaction)
-6.  Pool checks out idle backend conn (or dials up to pool_size)
+6.  Pool checks out idle backend conn, waits when at capacity (up to `pool_acquire_timeout_seconds`), or dials up to `pool_size`
 7.  Query forwarded verbatim to backend
 8.  All response messages streamed back until ReadyForQuery
 9.  ReadyForQuery status byte updates transaction tracking
@@ -174,10 +188,9 @@ go test ./...
 
 | Feature | Notes |
 |---|---|
-| Client authentication | Currently accepts all connections without verifying credentials |
+| Client authentication | Proxy accepts all inbound connections without verifying credentials |
 | TLS | No TLS support on either side |
 | Prepared statements | Extended query protocol always routed to primary |
 | `COPY` streaming | Not handled |
 | Cancel requests | `CancelRequest` messages use a separate backend connection |
-| Wait queue | Pool exhaustion returns an error instead of queuing |
 | Prometheus format | `/metrics` returns JSON, not Prometheus exposition format |

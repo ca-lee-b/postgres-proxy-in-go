@@ -39,7 +39,7 @@ func (c *Checker) Start(primary config.BackendConfig, replicas []config.BackendC
 }
 
 func (c *Checker) runLoop(b config.BackendConfig) {
-	key := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	key := net.JoinHostPort(b.Host, fmt.Sprintf("%d", b.Port))
 	for {
 		up := c.probe(b)
 		c.mu.Lock()
@@ -69,7 +69,7 @@ func (c *Checker) runLoop(b config.BackendConfig) {
 }
 
 func (c *Checker) probe(b config.BackendConfig) bool {
-	addr := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	addr := net.JoinHostPort(b.Host, fmt.Sprintf("%d", b.Port))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		return false
@@ -80,7 +80,7 @@ func (c *Checker) probe(b config.BackendConfig) bool {
 
 // SetDown marks a backend as down (used in tests)
 func (c *Checker) SetDown(b config.BackendConfig) {
-	key := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	key := net.JoinHostPort(b.Host, fmt.Sprintf("%d", b.Port))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.statuses[key] = StatusDown
@@ -88,14 +88,14 @@ func (c *Checker) SetDown(b config.BackendConfig) {
 
 // SetUp marks a backend as up (used in tests)
 func (c *Checker) SetUp(b config.BackendConfig) {
-	key := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	key := net.JoinHostPort(b.Host, fmt.Sprintf("%d", b.Port))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.statuses[key] = StatusUp
 }
 
 func (c *Checker) IsUp(b config.BackendConfig) bool {
-	key := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	key := net.JoinHostPort(b.Host, fmt.Sprintf("%d", b.Port))
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	s, ok := c.statuses[key]

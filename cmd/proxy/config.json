@@ -2,6 +2,11 @@
   "listen_addr": "0.0.0.0:8080",
   "metrics_addr": ":9090",
   "pool_size": 10,
+  "pool_min_size": 0,
+  "pool_max_idle_seconds": 300,
+  "pool_max_life_seconds": 3600,
+  "pool_acquire_timeout_seconds": 3,
+  "pool_idle_check_seconds": 30,
   "health_interval_seconds": 5,
   "primary": {
     "host": "localhost",
